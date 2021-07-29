@@ -1,4 +1,4 @@
-from threading import Thread
+from threading import Thread, Event
 import socket
 from datetime import datetime
 from optparse import OptionParser
@@ -16,6 +16,7 @@ class HTTPSever:
         self.workers_num = workers
         self.timeout = 5
         self.service_state(True)
+        self._stop_event = Event()
 
     def service_state(self, state):
         self.running_state = state
@@ -44,6 +45,7 @@ class HTTPSever:
             logging.info("Client {i} has been connected at {p} port".format(i=adr[0], p=adr[1]))
             t = Thread(target=self.handle_client, args=(cl, adr))
             t.start()
+            t.join()
         self.close()
         print("Socket server has stopped")
 
@@ -51,6 +53,7 @@ class HTTPSever:
         if stop and self.running_state:
             logging.info("Service has been marked for shutdown")
             self.service_state(False)
+            # self._stop_event.set()
             self.close()
 
     def close(self):
@@ -63,12 +66,15 @@ class HTTPSever:
         logging.info("Client's address is {}\n".format(client_address[0]))
         if data:
             request_data = data.split(' ')
-            method, req_file = request_data[0], ' '.join(request_data[:1])
+            method, req_file = request_data[0], request_data[1]
             req_file = req_file.split('?')[0].lstrip('/')
+            logging.info("Request file is {}\n".format(req_file))
+            
             if req_file == '/':
                 req_file = 'index.html'
             elif req_file[-1] == '/':
                 req_file = ''.join([req_file, 'index.html'])
+            logging.info("Request file to response is{}\n".format(req_file))
             response = self.handler(method, req_file)
             client.sendall(response)
         client.close()
@@ -88,7 +94,7 @@ class HTTPHandler:
             header = self.do_HEAD(file_name)
             response = ''.encode('utf-8')
         else:
-            header = 'HTTP/1.1 405 Not allowed\n\n'.encode('utf-8')
+            header = 'HTTP/1.1 405 Not allowed\n'.encode('utf-8')
             response = '<html><body><center><h3>Error 405: Method not allowed</h3></center></body></html>'.encode(
                 'utf-8')
         const_response = ''.join([server, date, connection]).encode('utf-8')
@@ -111,8 +117,7 @@ class HTTPHandler:
             header = 'HTTP/1.1 403 Forbidden\n'
             response = '<html><body><center><h3>Error 403: Access forbidden</h3></center></body></html>'.encode(
                 'utf-8')
-        fin_response = header.encode('utf-8')
-        fin_response += response
+        header = header.encode('utf-8')
         return header, response
 
     def do_HEAD(self, file_name):
