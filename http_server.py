@@ -1,4 +1,4 @@
-from threading import Thread, Event
+from threading import Thread
 import socket
 from datetime import datetime
 from optparse import OptionParser
@@ -6,6 +6,37 @@ import logging
 import os
 import sys
 import re
+
+
+def urldecode(file_name):
+    p = re.compile(r'%\w{2}')
+    symbols = p.split(file_name)
+    special = p.findall(file_name)
+    name = [symbols[0]]
+    for i in range(len(symbols[1:])):
+        name.append(bytearray.fromhex(special[i].lstrip('%')).decode())
+        name.append(symbols[i + 1])
+    return ''.join(name)
+
+
+def define_type(file_name):
+    if file_name.endswith(".html"):
+        mimetype = 'text/html'
+    elif file_name.endswith(".css"):
+        mimetype = 'text/css'
+    elif file_name.endswith(".js"):
+        mimetype = 'text/javascript'
+    elif file_name.endswith(".jpg") or file_name.endswith(".jpeg"):
+        mimetype = 'image/jpeg'
+    elif file_name.endswith(".png"):
+        mimetype = 'image/png'
+    elif file_name.endswith(".gif"):
+        mimetype = 'image/gif'
+    elif file_name.endswith(".swf"):
+        mimetype = 'application/x-shockwave-flash'
+    else:
+        mimetype = 'text/plain'
+    return mimetype
 
 
 class HTTPSever:
@@ -16,8 +47,9 @@ class HTTPSever:
         self.handler = request_handler
         self.workers_num = workers
         self.timeout = 5
+        self.running_state = None
         self.service_state(True)
-        self._stop_event = Event()
+        self.socket = None
 
     def service_state(self, state):
         self.running_state = state
@@ -54,7 +86,6 @@ class HTTPSever:
         if stop and self.running_state:
             logging.info("Service has been marked for shutdown")
             self.service_state(False)
-            # self._stop_event.set()
             self.close()
 
     def close(self):
@@ -82,15 +113,15 @@ class HTTPSever:
 
 
 class HTTPHandler:
-    def __init__(self, dir):
-        self._dir = dir
+    def __init__(self, dir_name):
+        self._dir = dir_name
 
     def __call__(self, method, file_name):
         server = 'Server: OTUServer\r\n'
         date = 'Date: {}\r\n'.format(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
         connection = 'Connection: keep-alive\r\n\r\n'
         if method == 'GET':
-            header, response = self.do_GET(self.urldecode(file_name))
+            header, response = self.do_GET(urldecode(file_name))
         elif method == 'HEAD':
             header = self.do_HEAD(file_name)
             response = ''.encode('utf-8')
@@ -102,23 +133,12 @@ class HTTPHandler:
         final_response = header + const_response + response
         return final_response
 
-    def urldecode(self, file_name):
-        p = re.compile(r'\%\w{2}')
-        symbols = p.split(file_name)
-        special = p.findall(file_name)
-        name = [symbols[0]]
-        for i in range(len(symbols[1:])):
-            name.append(bytearray.fromhex(special[i].lstrip('%')).decode())
-            name.append(symbols[i+1])
-        return ''.join(name)
-
-
     def do_GET(self, file_name):
         try:
             with open(os.path.join(self._dir, file_name), 'rb') as f:
                 response = f.read()
             status = 'HTTP/1.1 200 OK\r\n'
-            content_type = 'Content-Type: {}\r\n'.format(self.define_type(file_name))
+            content_type = 'Content-Type: {}\r\n'.format(define_type(file_name))
             content_length = 'Content-Length: {}\r\n'.format(len(response))
             header = ''.join([status, content_type, content_length])
             logging.info("Response body is {}\n".format(response))
@@ -139,7 +159,7 @@ class HTTPHandler:
             with open(os.path.join(self._dir, file_name), 'rb') as f:
                 response = f.read()
             status = 'HTTP/1.1 200 OK\r\n'
-            content_type = 'Content-Type: {}\r\n'.format(self.define_type(file_name))
+            content_type = 'Content-Type: {}\r\n'.format(define_type(file_name))
             content_length = 'Content-Length: {}\r\n'.format(len(response))
             header = ''.join([status, content_type, content_length])
         except:
@@ -147,25 +167,6 @@ class HTTPHandler:
         logging.info("Response header is {}\n".format(header))
         header = header.encode('utf-8')
         return header
-
-    def define_type(self, file_name):
-        if file_name.endswith(".html"):
-            mimetype = 'text/html'
-        elif file_name.endswith(".css"):
-            mimetype = 'text/css'
-        elif file_name.endswith(".js"):
-            mimetype = 'text/javascript'
-        elif file_name.endswith(".jpg") or file_name.endswith(".jpeg"):
-            mimetype = 'image/jpeg'
-        elif file_name.endswith(".png"):
-            mimetype = 'image/png'
-        elif file_name.endswith(".gif"):
-            mimetype = 'image/gif'
-        elif file_name.endswith(".swf"):
-            mimetype = 'application/x-shockwave-flash'
-        else:
-            mimetype = 'text/plain'
-        return mimetype
 
 
 if __name__ == "__main__":
