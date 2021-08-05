@@ -103,9 +103,9 @@ class HTTPSever:
         req_file = req_file.split('?')[0].lstrip('/')
         logging.info("Request file is {}\n".format(req_file))
 
-        if req_file == '/':
+        if not req_file:
             req_file = 'index.html'
-        elif req_file[-1] == '/':
+        elif req_file and req_file[-1] == '/':
             req_file = ''.join([req_file, 'index.html'])
         return method, req_file
 
