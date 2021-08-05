@@ -39,6 +39,10 @@ def define_type(file_name):
     return mimetype
 
 
+response_templ = '<html><body><center><h3>Error {0}: {1}</h3></center></body></html>'
+response_status_templ = 'HTTP/1.1 {0} {1}\r\n'
+
+
 class HTTPSever:
 
     def __init__(self, server_address, request_handler, workers):
@@ -92,21 +96,25 @@ class HTTPSever:
         self.socket.shutdown(socket.SHUT_RDWR)
         self.socket.close()
 
+    def parse_request(self, data):
+        request_data = data.splitlines()[0]
+        request_data = request_data.rstrip('\r\n')
+        method, req_file, req_version = request_data.split()
+        req_file = req_file.split('?')[0].lstrip('/')
+        logging.info("Request file is {}\n".format(req_file))
+
+        if req_file == '/':
+            req_file = 'index.html'
+        elif req_file[-1] == '/':
+            req_file = ''.join([req_file, 'index.html'])
+        return method, req_file
+
     def handle_client(self, client, client_address):
         data = client.recv(2048).decode('utf-8')
         logging.info("Client's request is {}\n".format(data))
         logging.info("Client's address is {}\n".format(client_address[0]))
         if data:
-            request_data = data.split(' ')
-            method, req_file = request_data[0], request_data[1]
-            req_file = req_file.split('?')[0].lstrip('/')
-            logging.info("Request file is {}\n".format(req_file))
-            
-            if req_file == '/':
-                req_file = 'index.html'
-            elif req_file[-1] == '/':
-                req_file = ''.join([req_file, 'index.html'])
-            logging.info("Request file to response is {}\n".format(req_file))
+            method, req_file = self.parse_request(data)
             response = self.handler(method, req_file)
             client.sendall(response)
         client.close()
@@ -117,56 +125,63 @@ class HTTPHandler:
         self._dir = dir_name
 
     def __call__(self, method, file_name):
-        server = 'Server: OTUServer\r\n'
-        date = 'Date: {}\r\n'.format(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-        connection = 'Connection: keep-alive\r\n\r\n'
+        server_headers = [
+            ('Server', 'OTUServer'),
+            ('Date', datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
+            ('Connection', 'keep-alive')
+        ]
         if method == 'GET':
-            header, response = self.do_GET(urldecode(file_name))
+            header, response = self.do_get(urldecode(file_name), server_headers)
         elif method == 'HEAD':
-            header = self.do_HEAD(file_name)
+            header = self.do_head(file_name, server_headers)
             response = ''.encode('utf-8')
         else:
-            header = 'HTTP/1.1 405 Not allowed\n'.encode('utf-8')
-            response = '<html><body><center><h3>Error 405: Method not allowed</h3></center></body></html>'.encode(
-                'utf-8')
-        const_response = ''.join([server, date, connection]).encode('utf-8')
-        final_response = header + const_response + response
+            header = response_status_templ.format(405, 'Not allowed').encode('utf-8')
+            response = response_templ.format(405, 'Method not allowed').encode('utf-8')
+        final_response = header + response
         return final_response
 
-    def do_GET(self, file_name):
+    def do_get(self, file_name, header):
         try:
             with open(os.path.join(self._dir, file_name), 'rb') as f:
                 response = f.read()
-            status = 'HTTP/1.1 200 OK\r\n'
-            content_type = 'Content-Type: {}\r\n'.format(define_type(file_name))
-            content_length = 'Content-Length: {}\r\n'.format(len(response))
-            header = ''.join([status, content_type, content_length])
-            logging.info("Response body is {}\n".format(response))
+            response_status = response_status_templ.format(200, 'OK')
+            server_headers = [
+                ('Content-Type', define_type(file_name)),
+                ('Content-Length', str(len(response)))
+            ]
+            header = header + server_headers
         except FileNotFoundError:
-            header = 'HTTP/1.1 404 Not Found\r\n'
-            response = '<html><body><center><h3>Error 404: File not found</h3></center></body></html>'.encode(
-                'utf-8')
+            response_status = response_status_templ.format(404, 'Not Found')
+            response = response_templ.format(404, 'File not found').encode('utf-8')
         except PermissionError:
-            header = 'HTTP/1.1 403 Forbidden\r\n'
-            response = '<html><body><center><h3>Error 403: Access forbidden</h3></center></body></html>'.encode(
-                'utf-8')
-        logging.info("Response header is {}\n".format(header))
-        header = header.encode('utf-8')
-        return header, response
+            response_status = response_status_templ.format(403, 'Forbidden')
+            response = response_templ.format(403, 'Access forbidden').encode('utf-8')
+        for el in header:
+            response_status += '{0}: {1}\r\n'.format(*el)
+        response_status += '\r\n'
+        logging.info("Response header is {}\n".format(response_status))
+        response_header = response_status.encode('utf-8')
+        return response_header, response
 
-    def do_HEAD(self, file_name):
+    def do_head(self, file_name, header):
         try:
             with open(os.path.join(self._dir, file_name), 'rb') as f:
                 response = f.read()
-            status = 'HTTP/1.1 200 OK\r\n'
-            content_type = 'Content-Type: {}\r\n'.format(define_type(file_name))
-            content_length = 'Content-Length: {}\r\n'.format(len(response))
-            header = ''.join([status, content_type, content_length])
+            response_status = response_status_templ.format(200, 'OK')
+            server_headers = [
+                ('Content-Type', define_type(file_name)),
+                ('Content-Length', str(len(response)))
+            ]
+            header = header + server_headers
         except:
-            header = 'HTTP/1.1 404 Not Found\n'
-        logging.info("Response header is {}\n".format(header))
-        header = header.encode('utf-8')
-        return header
+            response_status = response_status_templ.format(404, 'Not Found')
+        for el in header:
+            response_status += '{0}: {1}\r\n'.format(*el)
+        response_status += '\r\n'
+        logging.info("Response header is {}\n".format(response_status))
+        response_header = response_status.encode('utf-8')
+        return response_header
 
 
 if __name__ == "__main__":
