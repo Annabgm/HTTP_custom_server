@@ -1,44 +1,18 @@
 from threading import Thread
-import socket
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from optparse import OptionParser
+from urllib import parse
+from pathlib import Path
+import socket
 import logging
 import os
 import sys
-import re
+import time
+import mimetypes
 
 
-def urldecode(file_name):
-    p = re.compile(r'%\w{2}')
-    symbols = p.split(file_name)
-    special = p.findall(file_name)
-    name = [symbols[0]]
-    for i in range(len(symbols[1:])):
-        name.append(bytearray.fromhex(special[i].lstrip('%')).decode())
-        name.append(symbols[i + 1])
-    return ''.join(name)
-
-
-def define_type(file_name):
-    if file_name.endswith(".html"):
-        mimetype = 'text/html'
-    elif file_name.endswith(".css"):
-        mimetype = 'text/css'
-    elif file_name.endswith(".js"):
-        mimetype = 'text/javascript'
-    elif file_name.endswith(".jpg") or file_name.endswith(".jpeg"):
-        mimetype = 'image/jpeg'
-    elif file_name.endswith(".png"):
-        mimetype = 'image/png'
-    elif file_name.endswith(".gif"):
-        mimetype = 'image/gif'
-    elif file_name.endswith(".swf"):
-        mimetype = 'application/x-shockwave-flash'
-    else:
-        mimetype = 'text/plain'
-    return mimetype
-
-
+mimetypes.add_type("application/javascript", ".js")
 response_templ = '<html><body><center><h3>Error {0}: {1}</h3></center></body></html>'
 response_status_templ = 'HTTP/1.1 {0} {1}\r\n'
 
@@ -50,6 +24,7 @@ class HTTPSever:
         self.port = server_address[1]
         self.handler = request_handler
         self.workers_num = workers
+        self.queue_lim = 128
         self.timeout = 5
         self.running_state = None
         self.service_state(True)
@@ -73,18 +48,21 @@ class HTTPSever:
             self.close()
             sys.exit()
 
-        self.socket.listen(self.workers_num)
+        self.socket.listen(self.queue_lim)
         logging.info("Socket now listening at {p}".format(p=self.port))
 
         while self.running_state:
             cl, adr = self.socket.accept()
             cl.settimeout(self.timeout)
-            logging.info("Client {i} has been connected at {p} port".format(i=adr[0], p=adr[1]))
-            t = Thread(target=self.handle_client, args=(cl, adr))
-            t.start()
-            t.join()
+            cl.setblocking(0)
+            logging.info("Client with adress {i} has been connected at {p} port".format(i=adr[0], p=adr[1]))
+            with ThreadPoolExecutor(max_workers=self.workers_num) as executor:
+                executor.submit(self.handle_client, cl)
+            # t = Thread(target=self.handle_client, args=(cl, adr))
+            # t.start()
+            # t.join()
         self.close()
-        print("Socket server has stopped")
+        logging.info("Socket server has stopped")
 
     def stop_service(self, stop=False):
         if stop and self.running_state:
@@ -109,10 +87,26 @@ class HTTPSever:
             req_file = ''.join([req_file, 'index.html'])
         return method, req_file
 
-    def handle_client(self, client, client_address):
-        data = client.recv(2048).decode('utf-8')
+    def handle_client(self, client):
+        buf = []
+        begin = time.time()
+        while True:
+            if buf and time.time()-begin > self.timeout:
+                break
+            elif time.time()-begin > self.timeout*2:
+                break
+            try:
+                data_batch = client.recv(2048).decode('utf-8')
+                if not data_batch:
+                    break
+                buf.append(data_batch)
+                begin = time.time()
+            except:
+                pass
+
+        data = ''.join(buf)
+        # data = client.recv(2048).decode('utf-8')
         logging.info("Client's request is {}\n".format(data))
-        logging.info("Client's address is {}\n".format(client_address[0]))
         if data:
             method, req_file = self.parse_request(data)
             response = self.handler(method, req_file)
@@ -130,8 +124,13 @@ class HTTPHandler:
             ('Date', datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
             ('Connection', 'keep-alive')
         ]
-        if method == 'GET':
-            header, response = self.do_get(urldecode(file_name), server_headers)
+        file_name_parts = Path(self._dir).joinpath(file_name).absolute().parts
+        doc_root = self._dir.split('/')[-1]
+        if doc_root not in file_name_parts:
+            header = response_status_templ.format(403, 'Forbidden').encode('utf-8')
+            response = response_templ.format(403, 'Access forbidden').encode('utf-8')
+        elif method == 'GET':
+            header, response = self.do_get(parse.unquote(file_name), server_headers)
         elif method == 'HEAD':
             header = self.do_head(file_name, server_headers)
             response = ''.encode('utf-8')
@@ -147,7 +146,7 @@ class HTTPHandler:
                 response = f.read()
             response_status = response_status_templ.format(200, 'OK')
             server_headers = [
-                ('Content-Type', define_type(file_name)),
+                ('Content-Type', mimetypes.guess_type(file_name, strict=False)[0]),
                 ('Content-Length', str(len(response)))
             ]
             header = header + server_headers
@@ -166,12 +165,11 @@ class HTTPHandler:
 
     def do_head(self, file_name, header):
         try:
-            with open(os.path.join(self._dir, file_name), 'rb') as f:
-                response = f.read()
+            resp_len = os.stat(os.path.join(self._dir, file_name)).st_size
             response_status = response_status_templ.format(200, 'OK')
             server_headers = [
-                ('Content-Type', define_type(file_name)),
-                ('Content-Length', str(len(response)))
+                ('Content-Type', mimetypes.guess_type(file_name, strict=False)[0]),
+                ('Content-Length', str(resp_len))
             ]
             header = header + server_headers
         except:
