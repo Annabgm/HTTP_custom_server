@@ -1,5 +1,5 @@
 from threading import Thread
-from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
 from datetime import datetime
 from optparse import OptionParser
 from urllib import parse
@@ -15,6 +15,65 @@ import mimetypes
 mimetypes.add_type("application/javascript", ".js")
 response_templ = '<html><body><center><h3>Error {0}: {1}</h3></center></body></html>'
 response_status_templ = 'HTTP/1.1 {0} {1}\r\n'
+
+
+def parse_request(data):
+    request_data = data.splitlines()[0]
+    request_data = request_data.rstrip('\r\n')
+    method, req_file, req_version = request_data.split()
+    req_file = req_file.split('?')[0].lstrip('/')
+    logging.info("Request file is {}\n".format(req_file))
+
+    if not req_file:
+        req_file = 'index.html'
+    elif req_file and req_file[-1] == '/':
+        req_file = ''.join([req_file, 'index.html'])
+    return method, req_file
+
+
+def handle_client(client, handler, timeout):
+    buf = []
+    begin = time.time()
+    while True:
+        if buf and time.time() - begin > timeout:
+            break
+        elif time.time() - begin > timeout * 2:
+            break
+        try:
+            data_batch = client.recv(2048).decode('utf-8')
+            if not data_batch:
+                break
+            buf.append(data_batch)
+            begin = time.time()
+        except:
+            pass
+
+    data = ''.join(buf)
+    # data = client.recv(2048).decode('utf-8')
+    logging.info("Client's request is {}\n".format(data))
+    if data:
+        method, req_file = parse_request(data)
+        response = handler(method, req_file)
+        client.sendall(response)
+    client.close()
+
+
+class Worker(Thread):
+    def __init__(self, queue, request_handler, timeout):
+        Thread.__init__(self)
+        self.queue = queue
+        self.handler = request_handler
+        self.timeout = timeout
+
+    def run(self):
+        while True:
+            client, add = self.queue.get()
+            try:
+                handle_client(client, self.handler, self.timeout)
+            except Exception as e:
+                logging.info("Exception {} occurred at address {}".format(e, add))
+            finally:
+                self.queue.task_done()
 
 
 class HTTPSever:
@@ -50,17 +109,24 @@ class HTTPSever:
 
         self.socket.listen(self.queue_lim)
         logging.info("Socket now listening at {p}".format(p=self.port))
+        queue = Queue()
+        for _ in range(self.workers_num):
+            worker = Worker(queue, self.handler, self.timeout)
+            worker.daemon = True
+            worker.start()
 
         while self.running_state:
             cl, adr = self.socket.accept()
             cl.settimeout(self.timeout)
             cl.setblocking(0)
             logging.info("Client with adress {i} has been connected at {p} port".format(i=adr[0], p=adr[1]))
-            with ThreadPoolExecutor(max_workers=self.workers_num) as executor:
-                executor.submit(self.handle_client, cl)
+            queue.put((cl, adr))
+            # with ThreadPoolExecutor(max_workers=self.workers_num) as executor:
+            #     executor.submit(self.handle_client, cl)
             # t = Thread(target=self.handle_client, args=(cl, adr))
             # t.start()
             # t.join()
+        queue.join()
         self.close()
         logging.info("Socket server has stopped")
 
@@ -74,44 +140,7 @@ class HTTPSever:
         self.socket.shutdown(socket.SHUT_RDWR)
         self.socket.close()
 
-    def parse_request(self, data):
-        request_data = data.splitlines()[0]
-        request_data = request_data.rstrip('\r\n')
-        method, req_file, req_version = request_data.split()
-        req_file = req_file.split('?')[0].lstrip('/')
-        logging.info("Request file is {}\n".format(req_file))
 
-        if not req_file:
-            req_file = 'index.html'
-        elif req_file and req_file[-1] == '/':
-            req_file = ''.join([req_file, 'index.html'])
-        return method, req_file
-
-    def handle_client(self, client):
-        buf = []
-        begin = time.time()
-        while True:
-            if buf and time.time()-begin > self.timeout:
-                break
-            elif time.time()-begin > self.timeout*2:
-                break
-            try:
-                data_batch = client.recv(2048).decode('utf-8')
-                if not data_batch:
-                    break
-                buf.append(data_batch)
-                begin = time.time()
-            except:
-                pass
-
-        data = ''.join(buf)
-        # data = client.recv(2048).decode('utf-8')
-        logging.info("Client's request is {}\n".format(data))
-        if data:
-            method, req_file = self.parse_request(data)
-            response = self.handler(method, req_file)
-            client.sendall(response)
-        client.close()
 
 
 class HTTPHandler:
