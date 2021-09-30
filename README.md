@@ -18,7 +18,7 @@ __Веб-сервер умеет:__
 * Корректный `Content-Type` для: `.html, .css, .js, .jpg, .jpeg, .png, .gif, .swf`.
 * Понимает пробелы и `%XX` в именах файлов.
 
-* `python http_server.py -w 5 -r ./html_content`
+* Запуск:  `python http_server.py -w 5 -r ./html_content`
 
 ## Результаты нагрузочного тестирования
 `ab -n 50000 -c 100 -r http://localhost:8080`
