@@ -23,43 +23,42 @@ __Веб-сервер умеет:__
 ## Результаты нагрузочного тестирования
 `ab -n 50000 -c 100 -r http://localhost:8080`
 
-Server Software:        OTUServer  
-Server Hostname:        localhost  
-Server Port:            8080  
+Server Software:        OTUServer
+Server Hostname:        localhost
+Server Port:            8080
 
-Document Path:          /  
-Document Length:        77 bytes  
+Document Path:          /
+Document Length:        34 bytes
 
-Concurrency Level:      100  
-Time taken for tests:   1406.488 seconds  
-Complete requests:      50000  
-Failed requests:        0  
-Non-2xx responses:      50000  
-Total transferred:      8650000 bytes  
-HTML transferred:       3850000 bytes  
-Requests per second:    35.55 [#/sec] (mean)  
-Time per request:       2812.977 [ms] (mean)  
-Time per request:       28.130 [ms] (mean, across all concurrent requests)  
-Transfer rate:          6.01 [Kbytes/sec] received  
+Concurrency Level:      100
+Time taken for tests:   319.757 seconds
+Complete requests:      50000
+Failed requests:        0
+Total transferred:      8400000 bytes
+HTML transferred:       1700000 bytes
+Requests per second:    156.37 [#/sec] (mean)
+Time per request:       639.513 [ms] (mean)
+Time per request:       6.395 [ms] (mean, across all concurrent requests)
+Transfer rate:          25.65 [Kbytes/sec] received  
 
 Connection Times (ms)  
 | | min | mean | [+/-sd] | median | max |
 |------- | --- | --- | --- | --- | --- |             
-| Connect: | 0 | 28 | 115.4 | 0 | 531 |
-| Processing: | 5 | 2778 | 264.8 | 2560 | 3611 | 
-| Waiting: | 2 | 1509 | 733.8 | 1526 | 3091 |
-| Total: | 5 | 2806 | 265.4 | 3039 | 3611 |
+| Connect: | 0 | 0 | 0.3 | 0 | 4 |
+| Processing: | 15 | 635 | 65.4 | 645 | 801 |
+| Waiting: | 10 | 634 | 65.3 | 643 | 798 |
+| Total: | 16 | 635 | 65.4 | 645 | 801 |
 
 
 Percentage of the requests served within a certain time (ms) 
 | Quant. | time(ms) |
 | ---- | -----|
-| 50% | 3039 |
-| 66% | 3048 |
-| 75% | 3052 |
-| 80% | 3054 |
-| 90% | 3060 |
-| 95% | 3066 |
-| 98% | 3073 |
-| 99% | 3079 |
-| 100% | 3611 (longest request) |
+| 50% | 645 |
+| 66% | 664 |
+| 75% | 676 |
+| 80% | 684 |
+| 90% | 703 |
+| 95% | 717 |
+| 98% | 732 |
+| 99% | 742 |
+| 100% | 801 (longest request) |
