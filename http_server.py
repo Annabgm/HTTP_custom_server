@@ -23,6 +23,7 @@ class Worker(Thread):
         self.queue = queue
         self.handler = request_handler
         self.timeout = timeout
+        self.data_lim = 8192
 
     def run(self):
         while True:
@@ -34,72 +35,39 @@ class Worker(Thread):
             finally:
                 self.queue.task_done()
 
-    def parse_request(self, data, header_dict):
+    def parse_request(self, data):
         request_data = data.splitlines()[0]
         request_data = request_data.rstrip('\r\n')
         method, req_file, req_version = request_data.split()
         req_file = req_file.split('?')[0].lstrip('/')
         logging.info("Request file is {}\n".format(req_file))
 
-        if header_dict['bad_request']:
-            method = 'bad_request'
         if not req_file:
             req_file = 'index.html'
         elif req_file and req_file[-1] == '/':
             req_file = ''.join([req_file, 'index.html'])
         return method, req_file
 
-    def rebuild_header(self, data):
-        field_dict = {}
-        request_data = data.splitlines()
-        for ln in request_data:
-            item = ln.rstrip('\r\n')
-            if not item:
-                field_dict['end'] = True
-            item_ = item.split(':', 1)
-            if len(item_) == 2:
-                field_dict[item_[0]] = item_[1]
-        return field_dict
-
     def handle_client(self, client):
         buf = []
         buf_len = 0
-        begin = time.time()
-        header = {'end': False, 'bad_request': False}
         while True:
-            if buf and time.time() - begin > self.timeout:
-                break
-            elif time.time() - begin > self.timeout * 2:
-                break
             try:
                 data_batch = client.recv(2048).decode('utf-8')
-                if not header['end']:
-                    upd_header = self.rebuild_header(data_batch)
-                    header.update(upd_header)
-                logging.info("Client's request header {}\n".format(header))
-                if (header.get('Transfer-Encoding') and
-                        header.get('Transfer-Encoding') != 'identity' and
-                        len(data_batch) == 0):
-                    break
-                elif (not header.get('Transfer-Encoding') and
-                      header.get('Content-Length') and
-                      buf_len > 0 and
-                      buf_len >= header.get('Content-Length')):
-                    break
-                elif not data_batch:
-                    header['bad_request'] = True
-                    break
+                lines = data_batch.split('\r\n')
                 buf.append(data_batch)
+                if len(lines) > 1:
+                    break
                 buf_len += len(data_batch)
-                begin = time.time()
+                if buf_len > self.data_lim:
+                    break
             except:
                 pass
 
-        logging.info("Client's request header {}\n".format(header))
         data = ''.join(buf)
         logging.info("Client's request is {}\n".format(data))
         if data:
-            method, req_file = self.parse_request(data, header)
+            method, req_file = self.parse_request(data)
             response = self.handler(method, req_file)
             client.sendall(response)
         client.close()
@@ -202,9 +170,6 @@ class HTTPHandler:
         elif method == 'HEAD':
             header = self.do_head(file_name, server_headers)
             response = ''.encode('utf-8')
-        elif method == 'bad_request':
-            header = response_status_templ.format(400, 'Bad request').encode('utf-8')
-            response = response_templ.format(400, 'Bad request').encode('utf-8')
         else:
             header = response_status_templ.format(405, 'Not allowed').encode('utf-8')
             response = response_templ.format(405, 'Method not allowed').encode('utf-8')
