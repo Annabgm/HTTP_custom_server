@@ -15,6 +15,7 @@ import mimetypes
 mimetypes.add_type("application/javascript", ".js")
 response_templ = '<html><body><center><h3>Error {0}: {1}</h3></center></body></html>'
 response_status_templ = 'HTTP/1.1 {0} {1}\r\n'
+HTTP_HEAD_TERMINATOR = '\r\n\r\n'
 
 
 class Worker(Thread):
@@ -35,8 +36,7 @@ class Worker(Thread):
             finally:
                 self.queue.task_done()
 
-    def parse_request(self, data):
-        request_data = data.splitlines()[0]
+    def parse_request(self, request_data):
         request_data = request_data.rstrip('\r\n')
         method, req_file, req_version = request_data.split()
         req_file = req_file.split('?')[0].lstrip('/')
@@ -48,15 +48,24 @@ class Worker(Thread):
             req_file = ''.join([req_file, 'index.html'])
         return method, req_file
 
+    def rebuild_header(self, request_data):
+        field_dict = {}
+        for ln in request_data:
+            item = ln.rstrip('\r\n')
+            item_ = item.split(':', 1)
+            if len(item_) == 2:
+                field_dict[item_[0]] = item_[1]
+        return field_dict
+
     def handle_client(self, client):
         buf = []
         buf_len = 0
         while True:
             try:
                 data_batch = client.recv(2048).decode('utf-8')
-                lines = data_batch.split('\r\n')
+                ind_sep = data_batch.find(HTTP_HEAD_TERMINATOR)
                 buf.append(data_batch)
-                if len(lines) > 1:
+                if ind_sep >= 0:
                     break
                 buf_len += len(data_batch)
                 if buf_len > self.data_lim:
@@ -67,8 +76,10 @@ class Worker(Thread):
         data = ''.join(buf)
         logging.info("Client's request is {}\n".format(data))
         if data:
-            method, req_file = self.parse_request(data)
-            response = self.handler(method, req_file)
+            split_data = data.splitlines()
+            method, req_file = self.parse_request(split_data[0])
+            header = self.rebuild_header(split_data)
+            response = self.handler(method, req_file, header)
             client.sendall(response)
         client.close()
 
@@ -154,7 +165,7 @@ class HTTPHandler:
     def __init__(self, dir_name):
         self._dir = dir_name
 
-    def __call__(self, method, file_name):
+    def __call__(self, method, file_name, req_header):
         server_headers = [
             ('Server', 'OTUServer'),
             ('Date', datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
